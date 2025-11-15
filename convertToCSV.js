@@ -23,41 +23,17 @@ export function convertToMultipleCSVs(records) {
 
     // Define headers for our 7 CSV files
     const headers = {
-        claims: [
-            "CaseNumber", "PatientNumber", "PatientName", "PatientPhoneNumber", "CarePlanID", "CarePlanCode", "AdmissionDate", "DischargeDate", "SurgeryDate", "RegistrationDate",
-            "TotalAmount", "AmountApproved", "TDSAmount", "Deducted", "DeductionPercentage",
-            "PatientDOB", "PatientGender","Patientaddress", "ProviderName", "PayerName",
-            "FinalCPDRecommendation", "FinalACORecommendation"
-        ],
-        payments: [
-            "CaseNumber", "PaymentStatus", "Remarks", "PaymentType", "TransactionAmount",
-            "TransactionDate", "PaidDate", "PaymentUniqueID"
-        ],
-        logs: [
-            "CaseNumber", "Sno", "Process", "RaisedDate", "UpdatedDate", "Type",
-            "Status", "Remarks", "User", "Amount"
-        ],
-        diagnoses: [
-            "CaseNumber", "Sno", "Type", "Code", "Display", "PackageCode",
-            "PackageName", "Amount", "Status"
-        ],
-        treatments: [
-            "CaseNumber", "Sno", "ProcedureType", "ProcedureName", "TypeDesc", "Amount",
-            "PackageCode", "PackageName", "Status"
-        ],
-        documents: [
-            "CaseNumber", "Sno", "DocType", "DocName", "DocPath", "ProviderDocName",
-            "ProviderDocPath", "Verified"
-        ],
-        addresses: [
-            "CaseNumber", "Address","City", "District", "State", "Pincode", "Contact"
+        patients: [
+            "Registration Id", "Patient Name", "Patient Phone", "Patient Address", "Diagnosis", "Treatment", "Date of Admission",
+            "Discharge Date", "Length of stay", "Treatment Plan Breakup", "Claimed Amount","Claimed amount after Dedcuctions","Claimed Amount Deduction","Claimed Amount Deduction(%)","Claimed Amount Deduction Breakup" ,"Claimed Amount Breakup","Total Claims(With Incentives)", "Claims Approved", "TDS",
+            "Settled to Bank", "Settlement Date", "Claims Approved Breakup", "Case Logs", "Payment TAT", "Deduction Amount",
+            "Deduction %", "Num of Queries", "Deduction Breakup"
         ]
     };
 
     // Initialize arrays to hold all our rows
     const rows = {
-        claims: [], payments: [], logs: [], diagnoses: [],
-        treatments: [], documents: [], addresses: []
+        patients: []
     };
 
     // Process each record in the main JSON array
@@ -73,64 +49,92 @@ export function convertToMultipleCSVs(records) {
         //Pateint details
         const patient_no = encounter?.patientnumber
         const patient_phone_no = encounter?.patientcontacts[0]?.contactnumber;
-        const patient_address = encounter?.patientaddress[0]?.addressline1 + (encounter?.patientaddress[0]?.addressline2 ? " " + encounter?.patientaddress[0]?.addressline2 : "");
+        const patient_address = encounter?.patientaddress[0]?.addressline1 + (encounter?.patientaddress[0]?.addressline2 ? "    " + encounter?.patientaddress[0]?.addressline2 : "");
         const carePlanID = encounter.careplanid;
         const carePlanCode = encounter.careplancode;
-        const deduction = amount.totalamount-amount.amountapproved;
-        const deduction_percentage = (deduction/amount.totalamount) * 100;
-        rows.claims.push([
-            caseNumber, patient_no, encounter.patientname, patient_phone_no, carePlanID, carePlanCode, claim.admissiondate, claim.dischargedate, claim.surgerydate, claim.registrationdate,
-            amount.totalamount, amount.amountapproved,amount.tdsDeduction, deduction, deduction_percentage,
-            encounter.patientdob, encounter.patientgender,patient_address, encounter.providername, encounter.payername,
-            claim.finalCPDRecommendation, claim.finalACORecommendation
-        ].map(escapeCSV).join(','));
-
+        const deduction = amount.totalamount - amount.amountapproved;
+        const deduction_percentage = (deduction / amount.totalamount) * 100;
         // 2. Build rows for payments.csv
+        let payments = "";
+        let tds = 0;
+        let transactionDate = null;
+        let status = "";
         (record?.payment ?? []).forEach(p => {
-            rows.payments.push([
-                caseNumber, p?.paymentstatus, p?.remarks, p?.paymenttype, p?.transactionamount,
-                p?.transactiondate, p?.paiddate, p?.paymentuniqueId
-            ].map(escapeCSV).join(','));
+            if (p?.paymenttype == "TDS") {
+                tds = p?.transactionamount;
+                transactionDate = p?.transactiondate;
+                status = p?.paymentstatus;
+            }
+            payments += p?.paymentstatus + "    " + p?.remarks + "    " + p?.paymenttype + "    " + p?.transactionamount + "    " + p?.transactiondate + "    " + p?.paiddate + "    " + p?.paymentuniqueId + '\n';
         });
 
-        // 3. Build rows for logs.csv
+        let logs = "";
+        let numQuery = 0;
         (record?.log ?? []).forEach(l => {
-            rows.logs.push([
-                caseNumber, l?.sno, l?.process, l?.raiseddate, l?.updateddate, l?.type,
-                l?.status, l?.remarks, l?.user, l?.amount
-            ].map(escapeCSV).join(','));
+            if (l?.status == "Claim Queried") numQuery++;
+            logs += l?.sno + "    " + l?.process + "    " + l?.raiseddate + "    " + l?.updateddate + "    " + l?.type + "    " + l?.status + "    " + l?.remarks + "    " + l?.user + "    " + l?.amount + "\n"
         });
 
         // 4. Build rows for diagnoses.csv
+        let diagnosis = "";
         (claim?.diagnosis ?? []).forEach(d => {
-            rows.diagnoses.push([
-                caseNumber, d?.sno, d?.type, d?.code, d?.display, d?.packagecode,
-                d?.packagename, d?.amount, d?.status
-            ].map(escapeCSV).join(','));
+            diagnosis += d?.sno + "    " + d.display+ "\n"
         });
 
         // 5. Build rows for treatments.csv
+        let treatments = "";
         (claim?.treatments ?? []).forEach(t => {
-            rows.treatments.push([
-                caseNumber, t?.sno, t?.proceduretype, t?.procedurename, t?.typedesc, t?.amount,
-                t?.packagecode, t?.packagename, t?.status
-            ].map(escapeCSV).join(','));
+            treatments += t?.sno + "    " + t?.proceduretype + "    " + t?.procedurename + "    " + t?.typedesc + "    " + t?.amount + "    " + t?.packagecode + "    " + t?.packagename + "    " + t?.status + "\n"
         });
 
-        // 6. Build rows for documents.csv
-        (record?.document ?? []).forEach(d => {
-            rows.documents.push([
-                caseNumber, d?.sno, d?.doctype, d?.docname, d?.docpath, d?.providerdocname,
-                d?.providerdocpath, d?.verified
-            ].map(escapeCSV).join(','));
+        // 6. Build rows for diagnoses.csv
+        let amounts = "";
+        let deductionBreakUp = "";
+        (claim?.amount?.calculatedamount ?? []).forEach(d => {
+            if (parseFloat(d?.netamount) != (parseFloat(d?.packagecost) * parseFloat(d?.quantity))) deductionBreakUp += (parseFloat(d?.packagecost) * parseFloat(d?.quantity)) - parseFloat(d?.amount) + "\n"
+            amounts += d?.packagecost + "    " + d?.status + "    " + "qnty: " + d?.quantity + "    " + d?.approvedfactor + "    " + d?.amount + "\n"
         });
 
-        // 7. Build rows for addresses.csv
-        (encounter?.patientaddress ?? []).forEach(a => {
-            rows.addresses.push([
-                caseNumber, patient_address, a?.city, a?.district,a?.state, a?.pincode, patient_phone_no
-            ].map(escapeCSV).join(','));
+        // 7. Build rows for diagnoses.csv
+        let amountapproved = "";
+        (claim?.amount?.calculatedamount ?? []).forEach(d => {
+            if (d?.status == "Approved") amountapproved += d?.packagecost + "    " + d?.status + "    " + "qnty: " + d?.quantity + "    " + d?.approvedfactor + "    " + d?.amount + "\n"
         });
+
+        // 7. Base decductions
+        let baseDeductions = "";
+        (claim?.amount?.calculatedamount ?? []).forEach(d => {
+            if ((d?.approvedfactor?.split("%").length > 1) && (parseInt(d?.approvedfactor?.split("%")[0]) < 100)) baseDeductions += d?.packagecost + "    " + d?.status + "    " + "qnty: " + d?.quantity + "    " + d?.approvedfactor + "    " + d?.amount + "\n"
+        });
+
+        // 8. Base decductions
+        let Deductions = "";
+        (claim?.amount?.calculatedamount ?? []).forEach(d => {
+            if(d.deductions)for(let deduction of d.deductions)Deductions += deduction.deductedamount + "    " + deduction.deductiondescription + "\n"
+        });
+
+        let dischargeDate = claim.dischargedate.split("/");
+        const date = dischargeDate[0];
+        dischargeDate[0] = dischargeDate[1];
+        dischargeDate[1] = date;
+        dischargeDate = dischargeDate.join("/")
+
+        let admissiondate = claim.admissiondate.split("/");
+        const datee = admissiondate[0];
+        admissiondate[0] = admissiondate[1];
+        admissiondate[1] = datee;
+        admissiondate = admissiondate.join("/")
+
+
+        const TAT = Math.ceil((new Date(transactionDate) - new Date(dischargeDate)) / 86400000);
+        const stay = Math.ceil((new Date(dischargeDate) - new Date(admissiondate)) / 86400000);
+        const baseDeduction = amount.packageamount - amount.totalpackageamount;
+        const baseDeductionPercentage = (baseDeduction / amount.packageamount) * 100; 
+
+        rows.patients.push([
+            patient_no, encounter.patientname, patient_phone_no, patient_address, diagnosis, claim.treatments[0]?.procedurename, claim.admissiondate, claim.dischargedate, stay, treatments,
+            amount.packageamount, amount.totalpackageamount, baseDeduction, baseDeductionPercentage, baseDeductions,amounts, amount.totalamount, amount.amountapproved, tds, status, transactionDate,amountapproved, logs, TAT, deduction, deduction_percentage, numQuery, Deductions
+        ].map(escapeCSV).join(','));
     }
 
     // Combine headers and rows for each file

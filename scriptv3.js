@@ -9,7 +9,7 @@ const DATA_URL = "https://provider.nha.gov.in";
 // --- User Settings (from your script) ---
 const DROPDOWN_TEXT_TO_SELECT = "Claims Paid";//change this to what you want to search
 const ROWS_PER_PAGE_TO_SET = "50";
-const WAIT_TIME_MS = 2000;
+const WAIT_TIME_MS = 1000;
 const NAV_NEXT_WAIT_TIME_MS = 500;
 const START_FROM_PAGE = 1;
 const START_FROM_INDEX_ON_PAGE = 0;
