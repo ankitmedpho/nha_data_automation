@@ -1,15 +1,22 @@
 {
-  "name": "nha_automation",
+  "name": "nha-automation",
   "version": "1.0.0",
-  "description": "",
-  "license": "ISC",
-  "author": "",
-  "type": "module",
-  "main": "index.js",
+  "description": "NHA Scraper Executable",
+  "main": "scriptv3.js",
+  "bin": "scriptv3.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "prebuild:exe": "del-cli node_modules/typed-query-selector/shim.d.ts",
+    "build:exe": "npm run prebuild:exe && pkg scriptv3.js --targets node18-macos-x64 --public" 
+  },
+  "pkg": {
+    "ignore": [
+      "**/*.d.ts"
+    ]
   },
   "dependencies": {
-    "puppeteer-core": "^24.28.0"
+    "puppeteer-core": "^21.5.0"
+  },
+  "devDependencies": {
+    "del-cli": "^5.1.0"
   }
 }

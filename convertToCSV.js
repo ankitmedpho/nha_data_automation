@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync } from 'fs';
-import { resolve } from 'path';
+const { readFileSync, writeFileSync } = require('fs');
+const { resolve } = require('path');
 
 /**
  * Converts the complex nested JSON into a set of related CSV files.
@@ -9,7 +9,7 @@ import { resolve } from 'path';
  * @returns {Object<string, string>} An object where keys are filenames (e.g., "claims.csv")
  * and values are the CSV data as strings.
  */
-export function convertToMultipleCSVs(records) {
+function convertToMultipleCSVs(records) {
     // Helper to escape CSV fields
     const escapeCSV = (val) => {
         if (val === null || val === undefined) return "";
@@ -147,7 +147,7 @@ export function convertToMultipleCSVs(records) {
 }
 
 // --- Main execution ---
-export function main() {
+function convert() {
     const filesToProcess = ['intercepted_api_data.json'];
     let allRecords = [];
 
@@ -193,5 +193,4 @@ export function main() {
     console.log(`\nDone. Wrote ${filesWritten} CSV files.`);
 }
 
-// Run the script
-main();
+module.exports = {convert};
