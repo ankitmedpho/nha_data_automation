@@ -24,10 +24,10 @@ function convertToMultipleCSVs(records) {
     // Define headers for our 7 CSV files
     const headers = {
         patients: [
-            "Registration Id", "Patient Name", "Patient Phone", "Patient Address", "Diagnosis", "Treatment", "Date of Admission",
+            "Registration Id", "Patient Name", "type", "Patient Phone", "Patient Address", "Diagnosis", "Treatment", "Date of Admission",
             "Discharge Date", "Length of stay", "Treatment Plan Breakup", "Claimed Amount","Claimed amount after Dedcuctions","Claimed Amount Deduction","Claimed Amount Deduction(%)","Claimed Amount Deduction Breakup" ,"Claimed Amount Breakup","Total Claims(With Incentives)", "Claims Approved", "TDS",
             "Settled to Bank", "Settlement Date", "Claims Approved Breakup", "Case Logs", "Payment TAT", "Deduction Amount",
-            "Deduction %", "Num of Queries", "Deduction Breakup"
+            "Deduction %", "Num of Queries","Queries", "Deduction Breakup"
         ]
     };
 
@@ -70,9 +70,13 @@ function convertToMultipleCSVs(records) {
 
         let logs = "";
         let numQuery = 0;
+        let queries = "";
         (record?.log ?? []).forEach(l => {
-            if (l?.status == "Claim Queried") numQuery++;
-            logs += l?.sno + "    " + l?.process + "    " + l?.raiseddate + "    " + l?.updateddate + "    " + l?.type + "    " + l?.status + "    " + l?.remarks + "    " + l?.user + "    " + l?.amount + "\n"
+            if (l?.status == "Claim Queried"){
+                queries+=l?.sno + "    " + l?.process + "    " + l?.raiseddate + "    " + l?.updateddate + "    " + l?.type + "    " + l?.status + "    " + l?.remarks + "    " + l?.user + "    " + l?.amount + "\n";
+                numQuery++;
+            }
+            logs += l?.sno + "    " + l?.process + "    " + l?.raiseddate + "    " + l?.updateddate + "    " + l?.type + "    " + l?.status + "    " + l?.remarks + "    " + l?.user + "    " + l?.amount + "\n";
         });
 
         // 4. Build rows for diagnoses.csv
@@ -132,8 +136,8 @@ function convertToMultipleCSVs(records) {
         const baseDeductionPercentage = (baseDeduction / amount.packageamount) * 100; 
 
         rows.patients.push([
-            patient_no, encounter.patientname, patient_phone_no, patient_address, diagnosis, claim.treatments[0]?.procedurename, claim.admissiondate, claim.dischargedate, stay, treatments,
-            amount.packageamount, amount.totalpackageamount, baseDeduction, baseDeductionPercentage, baseDeductions,amounts, amount.totalamount, amount.amountapproved, tds, status, transactionDate,amountapproved, logs, TAT, deduction, deduction_percentage, numQuery, Deductions
+            patient_no, encounter.patientname,record.type, patient_phone_no, patient_address, diagnosis, claim.treatments[0]?.procedurename, claim.admissiondate, claim.dischargedate, stay, treatments,
+            amount.packageamount, amount.totalpackageamount, baseDeduction, baseDeductionPercentage, baseDeductions,amounts, amount.totalamount, amount.amountapproved, tds, status, transactionDate,amountapproved, logs, TAT, deduction, deduction_percentage, numQuery,queries, Deductions
         ].map(escapeCSV).join(','));
     }
 

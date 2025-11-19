@@ -1,11 +1,12 @@
 const { connect } = require('puppeteer-core');
 const { writeFileSync } = require('fs');
 const { convert } = require("./convertToCSV.js");
+const { exit } = require('process');
 
 const DEBUGGING_PORT = 9222;
 const DATA_URL = "https://provider.nha.gov.in";
 
-const DROPDOWN_TEXT_TO_SELECT = "claims paid";
+const DROPDOWN = ["claims paid","claims sent to bank"];
 const ROWS_PER_PAGE_TO_SET = "50";
 const WAIT_TIME_MS = 1000;
 const NAV_NEXT_WAIT_TIME_MS = 500;
@@ -29,14 +30,14 @@ function cleanClaimData(data) {
     } catch (e) {
         console.error("Error while cleaning data:", e);
     }
-    return data; 
+    return data;
 }
 
 async function main() {
     let browser;
-    let page; 
-    let INTERCEPTED_DATA = []; 
-    let FAILED_PATIENTS = []; 
+    let page;
+    let INTERCEPTED_DATA = [];
+    let FAILED_PATIENTS = [];
     let patientDataCollector = {};
 
     try {
@@ -45,7 +46,7 @@ async function main() {
         const browserURL = `http://127.0.0.1:${DEBUGGING_PORT}`;
         browser = await connect({
             browserURL: browserURL,
-            defaultViewport: null, 
+            defaultViewport: null,
         });
 
         const pages = await browser.pages();
@@ -93,7 +94,7 @@ async function main() {
         });
 
         console.log("Setting up network response listener...");
-        
+
         page.on('response', async (response) => {
             if (response.url().includes("claim/info")) {
                 try {
@@ -106,7 +107,7 @@ async function main() {
                 }
             }
         });
-        
+
         page.on('response', async (response) => {
             if (response.url().includes("activity/log")) {
                 try {
@@ -118,7 +119,7 @@ async function main() {
                 }
             }
         });
-        
+
         page.on('response', async (response) => {
             if (response.url().includes("fetch/paymentDtls")) {
                 try {
@@ -133,7 +134,7 @@ async function main() {
 
         try {
             console.log("--- Starting Scrape (Node.js controlled) ---");
-            
+
             const setRowsPerPage = async (numRows) => {
                 const success = await page.evaluate(async (numRows, waitMs) => {
                     const rowsLabel = window.getElementByTextContains('p', 'Rows per page');
@@ -162,7 +163,7 @@ async function main() {
                     if (targetPage < currentPageNum) {
                         var homeButton = window.getElementByNormalizedText('p', 'Home');
                         if (homeButton) {
-                            homeButton.closest('div').click(); 
+                            homeButton.closest('div').click();
                             await window.sleep(waitMs);
                             return (targetPage === 1);
                         } else { return false; }
@@ -170,7 +171,7 @@ async function main() {
                     for (let i = currentPageNum; i < targetPage; i++) {
                         const nextButton = document.querySelector('li.next a[rel="next"]');
                         if (!nextButton || nextButton.getAttribute('aria-disabled') === 'true') return false;
-                        nextButton.click(); 
+                        nextButton.click();
                         await window.sleep(navWaitMs);
                     }
                     await window.sleep(200);
@@ -192,34 +193,35 @@ async function main() {
                 ]);
             };
 
-            console.log("Running initial setup (Dropdown)...");
-            await page.evaluate(async (TEXT, WAIT) => {
-                try {
-                    const input = document.querySelector('label[for="patientStatus"] + div input[id*="-input"]');
-                    if (!input) { console.error("CRITICAL: Dropdown not found."); return; }
-                    input.focus();
-                    var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                    nativeInputValueSetter.call(input, TEXT);
-                    input.dispatchEvent(new Event('input', { bubbles: true })); await window.sleep(300);
-                    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                    input.blur(); await window.sleep(WAIT);
-                } catch (e) {
-                    console.error("CRITICAL: Failed initial setup.", e);
-                }
-            }, DROPDOWN_TEXT_TO_SELECT, WAIT_TIME_MS);
-            
-            let currentPage = START_FROM_PAGE;
-            let rowsPerPageNum = parseInt(ROWS_PER_PAGE_TO_SET);
+            for (const DROPDOWN_TEXT_TO_SELECT of DROPDOWN) { 
+                console.log("Running initial setup (Dropdown)...");
+                await page.evaluate(async (TEXT, WAIT) => {
+                    try {
+                        const input = document.querySelector('label[for="patientStatus"] + div input[id*="-input"]');
+                        if (!input) { console.error("CRITICAL: Dropdown not found."); return; }
+                        input.focus();
+                        var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                        nativeInputValueSetter.call(input, TEXT);
+                        input.dispatchEvent(new Event('input', { bubbles: true })); await window.sleep(300);
+                        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+                        input.blur(); await window.sleep(WAIT);
+                    } catch (e) {
+                        console.error("CRITICAL: Failed initial setup.", e);
+                    }
+                }, DROPDOWN_TEXT_TO_SELECT, WAIT_TIME_MS);
 
-            while (true) {
-                console.log(`\n==================\nStarting Page ${currentPage}\n==================`);
-                
-                if (!await setRowsPerPage(ROWS_PER_PAGE_TO_SET)) break;
-                if (!await navigateToPage(currentPage)) break;
+                let currentPage = START_FROM_PAGE;
+                let rowsPerPageNum = parseInt(ROWS_PER_PAGE_TO_SET);
 
-                const patientCards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
-                
-                if (patientCards.length === 0) {
+                while (true) {
+                    console.log(`\n==================\nStarting Page ${currentPage}\n==================`);
+
+                    if (!await setRowsPerPage(ROWS_PER_PAGE_TO_SET)) break;
+                    if (!await navigateToPage(currentPage)) break;
+
+                    const patientCards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
+
+                    if (patientCards.length === 0) {
                         console.log("No patient cards found. Checking for 'Next' button...");
                         const nextDisabled = await page.evaluate(() => {
                             const nextButtonCheck = document.querySelector('li.next a[rel="next"]');
@@ -228,124 +230,126 @@ async function main() {
                         if (nextDisabled) console.log("Last page reached.");
                         else console.warn("Not last page, but empty. Stopping.");
                         break;
-                }
-                
-                const startIndex = (currentPage === START_FROM_PAGE) ? START_FROM_INDEX_ON_PAGE : 0;
-                console.log(`Found ${patientCards.length} cards. Starting from index ${startIndex}.`);
-
-                for (let i = startIndex; i < patientCards.length; i++) {
-                    const currentPatientGlobalIndex = (currentPage - 1) * rowsPerPageNum + i;
-                    const patientIdentifier = `Patient ${currentPatientGlobalIndex + 1}`;
-                    
-                    console.log(`\n--- Processing ${patientIdentifier} ---`);
-
-                    let success = false;
-                    let retries = 0;
-                    
-                    patientDataCollector = {};
-
-                    while (retries < MAX_PATIENT_RETRIES && !success) {
-                        const cards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
-                        const card = cards[i];
-
-                        const nameLabel = await card.$('label');
-                        const nameFromCard = nameLabel ? await nameLabel.evaluate(el => el.textContent.trim()) : patientIdentifier;
-
-                        if (retries > 0) {
-                            console.log(`Retry ${retries}/${MAX_PATIENT_RETRIES} for ${patientIdentifier}...`);
-                            patientDataCollector = {};
-                        }
-
-                        try {
-                            const clickableElement = await card.waitForSelector("something", { timeout: 5000 });
-                            if (!clickableElement) throw new Error(`clickableElement <something> not found.`);
-                            
-                            await Promise.all([
-                                page.waitForNavigation({ waitUntil: 'networkidle0' }),
-                                clickableElement.click()
-                            ]);
-                            
-                            console.log(`On detail page. Clicking 'Home' to go back...`);
-                            await clickHomeButton();
-                            
-                            await new Promise(resolve => setTimeout(resolve, WAIT_TIME_MS));
-                            
-                            if (i < patientCards.length - 1) { 
-                                console.log("Re-setting page state...");
-                                if (!await setRowsPerPage(ROWS_PER_PAGE_TO_SET)) throw new Error("Failed to set rows after Home click.");
-                                if (!await navigateToPage(currentPage)) throw new Error("Failed to re-navigate to page.");
-                            }
-                            
-                            success = true; 
-                            
-                            if (Object.keys(patientDataCollector).length > 0) {
-                                console.log(`Saving ${Object.keys(patientDataCollector).length} intercepted responses for ${patientIdentifier}`);
-                                patientDataCollector.patientInfo = {
-                                    name: nameFromCard,
-                                    globalIndex: currentPatientGlobalIndex,
-                                    page: currentPage,
-                                    indexOnPage: i
-                                };
-                                INTERCEPTED_DATA.push(patientDataCollector);
-                            } else {
-                                console.warn(`No API calls were intercepted for ${patientIdentifier}.`);
-                            }
-
-                        } catch (e) {
-                            retries++;
-                            console.error(`ERROR (Attempt ${retries}/${MAX_PATIENT_RETRIES}) for ${patientIdentifier}: ${e.message}`);
-                            console.log("Attempting recovery...");
-                            
-                            try {
-                                const isOnListPage = await page.evaluate(() => window.getElementByTextContains('p', 'Rows per page'));
-                                if (!isOnListPage) {
-                                    console.log("Not on list page. Clicking 'Home' to recover...");
-                                    await clickHomeButton();
-                                } else {
-                                    console.log("Already on list page.");
-                                }
-                                await new Promise(resolve => setTimeout(resolve, WAIT_TIME_MS));
-                                
-                                console.log("Re-setting page state after recovery...");
-                                if (!await setRowsPerPage(ROWS_PER_PAGE_TO_SET)) throw new Error("Failed to set rows during recovery.");
-                                if (!await navigateToPage(currentPage)) throw new Error("Failed to re-navigate during recovery.");
-
-                            } catch (backError) {
-                                console.error(`CRITICAL: Recovery failed. ${backError.message}`);
-                                retries = MAX_PATIENT_RETRIES; 
-                            }
-                        }
-                    } 
-
-                    if (!success) {
-                        console.error(`--- FAILED: ${patientIdentifier} after ${MAX_PATIENT_RETRIES} attempts. Logging and skipping. ---`);
-                        const cards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
-                        const card = cards[i];
-                        const nameLabel = await card.$('label');
-                        const nameFromCard = nameLabel ? await nameLabel.evaluate(el => el.textContent.trim()) : patientIdentifier;
-
-                        FAILED_PATIENTS.push({
-                            patientIdentifier: patientIdentifier,
-                            globalIndex: currentPatientGlobalIndex,
-                            page: currentPage,
-                            indexOnPage: i,
-                            name: nameFromCard,
-                        });
                     }
-                } 
 
-                const nextDisabled = await page.evaluate(() => {
-                    const nextButtonCheck = document.querySelector('li.next a[rel="next"]');
-                    return (!nextButtonCheck || nextButtonCheck.getAttribute('aria-disabled') === 'true');
-                });
-                
-                if (nextDisabled) {
-                    console.log("Last page reached or 'Next' disabled.");
-                    break; 
+                    const startIndex = (currentPage === START_FROM_PAGE) ? START_FROM_INDEX_ON_PAGE : 0;
+                    console.log(`Found ${patientCards.length} cards. Starting from index ${startIndex}.`);
+
+                    for (let i = startIndex; i < patientCards.length; i++) {
+                        const currentPatientGlobalIndex = (currentPage - 1) * rowsPerPageNum + i;
+                        const patientIdentifier = `Patient ${currentPatientGlobalIndex + 1}`;
+
+                        console.log(`\n--- Processing ${patientIdentifier} ---`);
+
+                        let success = false;
+                        let retries = 0;
+
+                        patientDataCollector = {};
+                        patientDataCollector.type = DROPDOWN_TEXT_TO_SELECT;
+
+                        while (retries < MAX_PATIENT_RETRIES && !success) {
+                            const cards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
+                            const card = cards[i];
+
+                            const nameLabel = await card.$('label');
+                            const nameFromCard = nameLabel ? await nameLabel.evaluate(el => el.textContent.trim()) : patientIdentifier;
+
+                            if (retries > 0) {
+                                console.log(`Retry ${retries}/${MAX_PATIENT_RETRIES} for ${patientIdentifier}...`);
+                                patientDataCollector = {};
+                            }
+
+                            try {
+                                const clickableElement = await card.waitForSelector("something", { timeout: 5000 });
+                                if (!clickableElement) throw new Error(`clickableElement <something> not found.`);
+
+                                await Promise.all([
+                                    page.waitForNavigation({ waitUntil: 'networkidle0' }),
+                                    clickableElement.click()
+                                ]);
+
+                                console.log(`On detail page. Clicking 'Home' to go back...`);
+                                await clickHomeButton();
+
+                                await new Promise(resolve => setTimeout(resolve, WAIT_TIME_MS));
+
+                                if (i < patientCards.length - 1) {
+                                    console.log("Re-setting page state...");
+                                    if (!await setRowsPerPage(ROWS_PER_PAGE_TO_SET)) throw new Error("Failed to set rows after Home click.");
+                                    if (!await navigateToPage(currentPage)) throw new Error("Failed to re-navigate to page.");
+                                }
+
+                                success = true;
+
+                                if (Object.keys(patientDataCollector).length > 0) {
+                                    console.log(`Saving ${Object.keys(patientDataCollector).length} intercepted responses for ${patientIdentifier}`);
+                                    patientDataCollector.patientInfo = {
+                                        name: nameFromCard,
+                                        globalIndex: currentPatientGlobalIndex,
+                                        page: currentPage,
+                                        indexOnPage: i
+                                    };
+                                    INTERCEPTED_DATA.push(patientDataCollector);
+                                } else {
+                                    console.warn(`No API calls were intercepted for ${patientIdentifier}.`);
+                                }
+
+                            } catch (e) {
+                                retries++;
+                                console.error(`ERROR (Attempt ${retries}/${MAX_PATIENT_RETRIES}) for ${patientIdentifier}: ${e.message}`);
+                                console.log("Attempting recovery...");
+
+                                try {
+                                    const isOnListPage = await page.evaluate(() => window.getElementByTextContains('p', 'Rows per page'));
+                                    if (!isOnListPage) {
+                                        console.log("Not on list page. Clicking 'Home' to recover...");
+                                        await clickHomeButton();
+                                    } else {
+                                        console.log("Already on list page.");
+                                    }
+                                    await new Promise(resolve => setTimeout(resolve, WAIT_TIME_MS));
+
+                                    console.log("Re-setting page state after recovery...");
+                                    if (!await setRowsPerPage(ROWS_PER_PAGE_TO_SET)) throw new Error("Failed to set rows during recovery.");
+                                    if (!await navigateToPage(currentPage)) throw new Error("Failed to re-navigate during recovery.");
+
+                                } catch (backError) {
+                                    console.error(`CRITICAL: Recovery failed. ${backError.message}`);
+                                    retries = MAX_PATIENT_RETRIES;
+                                }
+                            }
+                        }
+
+                        if (!success) {
+                            console.error(`--- FAILED: ${patientIdentifier} after ${MAX_PATIENT_RETRIES} attempts. Logging and skipping. ---`);
+                            const cards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
+                            const card = cards[i];
+                            const nameLabel = await card.$('label');
+                            const nameFromCard = nameLabel ? await nameLabel.evaluate(el => el.textContent.trim()) : patientIdentifier;
+
+                            FAILED_PATIENTS.push({
+                                patientIdentifier: patientIdentifier,
+                                globalIndex: currentPatientGlobalIndex,
+                                page: currentPage,
+                                indexOnPage: i,
+                                name: nameFromCard,
+                            });
+                        }
+                    }
+
+                    const nextDisabled = await page.evaluate(() => {
+                        const nextButtonCheck = document.querySelector('li.next a[rel="next"]');
+                        return (!nextButtonCheck || nextButtonCheck.getAttribute('aria-disabled') === 'true');
+                    });
+
+                    if (nextDisabled) {
+                        console.log("Last page reached or 'Next' disabled.");
+                        break;
+                    }
+                    currentPage++;
                 }
-                currentPage++;
             }
-            
+
         } catch (e) {
             console.error(`Error during script execution: ${e.message}`);
         }
@@ -353,7 +357,7 @@ async function main() {
         console.log("\n\n=======================================================");
         console.log("--- AUTOMATION COMPLETE ---");
         console.log(`Successfully intercepted and grouped ${INTERCEPTED_DATA.length} patient data objects.`);
-        
+
         if (INTERCEPTED_DATA.length > 0) {
             const filePath = 'intercepted_api_data.json';
             writeFileSync(filePath, JSON.stringify(INTERCEPTED_DATA, null, 2));
@@ -380,13 +384,18 @@ async function main() {
     } catch (e) {
         console.error("\n--- SCRIPT FAILED ---");
         console.error(e.message);
-        console.log("\nCommon Errors:");
-        console.log(`1. Did you start Chrome with '--remote-debugging-port=${DEBUGGING_PORT}'?`);
-        console.log("2. Is the Chrome window still open?");
-        console.log("3. Did you manually log in to the website in that window?");
         if (browser) {
             await browser.disconnect();
         }
+    } finally {
+        process.stdin.setEncoding('utf8');
+
+        console.log('Enter something to exit:');
+
+        process.stdin.on('data', (data) => {
+            console.log("Exiting");
+            exit();
+        });
     }
 }
 
