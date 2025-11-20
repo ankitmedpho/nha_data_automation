@@ -25,7 +25,7 @@ function convertToMultipleCSVs(records) {
     const headers = {
         patients: [
             "Registration Id", "Patient Name", "type", "Patient Phone", "Patient Address", "Diagnosis", "Treatment", "Date of Admission",
-            "Discharge Date", "Length of stay", "Treatment Plan Breakup", "Claimed Amount","Claimed amount after Dedcuctions","Claimed Amount Deduction","Claimed Amount Deduction(%)","Claimed Amount Deduction Breakup" ,"Claimed Amount Breakup","Total Claims(With Incentives)", "Claims Approved", "TDS",
+            "Discharge Date", "Length of stay", "Treatment Plan Breakup", "Claimed Amount","Claimed amount after Dedcuctions","Claimed Amount Deduction","Claimed Amount Deduction(%)","Claimed Amount Deduction Breakup" ,"Claimed Amount Breakup","Total Claims(With Incentives)", "Claims Approved", "TDS", "Final amount after TDS",
             "Settled to Bank", "Settlement Date", "Claims Approved Breakup", "Case Logs", "Payment TAT", "Deduction Amount",
             "Deduction %", "Num of Queries","Queries", "Deduction Breakup"
         ]
@@ -134,10 +134,11 @@ function convertToMultipleCSVs(records) {
         const stay = Math.ceil((new Date(dischargeDate) - new Date(admissiondate)) / 86400000);
         const baseDeduction = amount.packageamount - amount.totalpackageamount;
         const baseDeductionPercentage = (baseDeduction / amount.packageamount) * 100; 
-
+        tds = tds == 0?(parseFloat(amount.amountapproved)/10):tds;
+        const final_amount_to_hospital = amount.amountapproved - tds;
         rows.patients.push([
             patient_no, encounter.patientname,record.type, patient_phone_no, patient_address, diagnosis, claim.treatments[0]?.procedurename, claim.admissiondate, claim.dischargedate, stay, treatments,
-            amount.packageamount, amount.totalpackageamount, baseDeduction, baseDeductionPercentage, baseDeductions,amounts, amount.totalamount, amount.amountapproved, tds, status, transactionDate,amountapproved, logs, TAT, deduction, deduction_percentage, numQuery,queries, Deductions
+            amount.packageamount, amount.totalpackageamount, baseDeduction, baseDeductionPercentage, baseDeductions,amounts, amount.totalamount, amount.amountapproved, tds, final_amount_to_hospital, status, transactionDate,amountapproved, logs, TAT, deduction, deduction_percentage, numQuery,queries, Deductions
         ].map(escapeCSV).join(','));
     }
 

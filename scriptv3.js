@@ -6,7 +6,7 @@ const { exit } = require('process');
 const DEBUGGING_PORT = 9222;
 const DATA_URL = "https://provider.nha.gov.in";
 
-const DROPDOWN = ["claims paid","claims sent to bank"];
+const DROPDOWN = ["claims paid", "claims sent to bank"];
 const ROWS_PER_PAGE_TO_SET = "50";
 const WAIT_TIME_MS = 1000;
 const NAV_NEXT_WAIT_TIME_MS = 500;
@@ -58,6 +58,15 @@ async function main() {
         if (!page) {
             throw new Error("Could not find an active page. Make sure you are on the website.");
         }
+
+        const session = await page.target().createCDPSession();
+        await session.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+        await session.send('Page.enable');
+        await session.send('Page.setWebLifecycleState', { state: 'active' });
+        await page.evaluateOnNewDocument(() => {
+            Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true });
+            Object.defineProperty(document, 'hidden', { value: false, writable: true });
+        });
 
         console.log(`Successfully connected to page: ${page.url()}`);
 
@@ -193,7 +202,19 @@ async function main() {
                 ]);
             };
 
-            for (const DROPDOWN_TEXT_TO_SELECT of DROPDOWN) { 
+            const reconnect = async () => {
+                console.log("reconnecting to the page...");
+                const new_pages = await browser.pages();
+                page = new_pages.find(p => p.url().startsWith(DATA_URL));
+                if (!page) {
+                    const DATA_URL_CASE = "https://provider.nha.gov.in/caseview";
+                    page = new_pages.find(p => p.url().startsWith(DATA_URL_CASE));
+                    await clickHomeButton();
+                }
+                console.log("reconnected");
+            }
+
+            for (const DROPDOWN_TEXT_TO_SELECT of DROPDOWN) {
                 console.log("Running initial setup (Dropdown)...");
                 await page.evaluate(async (TEXT, WAIT) => {
                     try {
@@ -218,6 +239,7 @@ async function main() {
 
                     if (!await setRowsPerPage(ROWS_PER_PAGE_TO_SET)) break;
                     if (!await navigateToPage(currentPage)) break;
+                    if (!page)reconnect();
 
                     const patientCards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
 
@@ -236,6 +258,7 @@ async function main() {
                     console.log(`Found ${patientCards.length} cards. Starting from index ${startIndex}.`);
 
                     for (let i = startIndex; i < patientCards.length; i++) {
+                        if (!page)reconnect();
                         const currentPatientGlobalIndex = (currentPage - 1) * rowsPerPageNum + i;
                         const patientIdentifier = `Patient ${currentPatientGlobalIndex + 1}`;
 
@@ -248,6 +271,7 @@ async function main() {
                         patientDataCollector.type = DROPDOWN_TEXT_TO_SELECT;
 
                         while (retries < MAX_PATIENT_RETRIES && !success) {
+                            if (!page)reconnect();
                             const cards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
                             const card = cards[i];
 
@@ -269,6 +293,7 @@ async function main() {
                                 ]);
 
                                 console.log(`On detail page. Clicking 'Home' to go back...`);
+                                await new Promise(resolve => setTimeout(resolve, 200));
                                 await clickHomeButton();
 
                                 await new Promise(resolve => setTimeout(resolve, WAIT_TIME_MS));
