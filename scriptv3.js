@@ -13,7 +13,7 @@ const NAV_NEXT_WAIT_TIME_MS = 500;
 const START_FROM_PAGE = 1;
 const START_FROM_INDEX_ON_PAGE = 0;
 const MAX_PATIENT_RETRIES = 3;
-
+const WAIT_FOR_DATA_TIME = 10000;
 function cleanClaimData(data) {
     if (!data) return data;
     try {
@@ -33,6 +33,11 @@ function cleanClaimData(data) {
     return data;
 }
 
+const flags = {
+    claim: false,
+    logs: false,
+    payment: false
+}
 async function main() {
     let browser;
     let page;
@@ -111,6 +116,7 @@ async function main() {
                     console.log(`Intercepted: claim/info`);
                     data = cleanClaimData(data);
                     patientDataCollector.claim = data;
+                    flags.claim = true;
                 } catch (e) {
                     console.warn(`\nCould not parse 'claim/info' response as JSON. ${e.message}\n`);
                 }
@@ -123,6 +129,7 @@ async function main() {
                     let data = await response.json();
                     console.log(`Intercepted: activity/log`);
                     patientDataCollector.log = data;
+                    flags.logs = true;
                 } catch (e) {
                     console.warn(`\nCould not parse 'activity/log' response as JSON. ${e.message}\n`);
                 }
@@ -135,6 +142,7 @@ async function main() {
                     let data = await response.json();
                     console.log(`Intercepted: fetch/paymentDtls`);
                     patientDataCollector.payment = data;
+                    flags.payment = true;
                 } catch (e) {
                     console.warn(`\nCould not parse 'fetch/paymentDtls' response as JSON. ${e.message}\n`);
                 }
@@ -143,7 +151,16 @@ async function main() {
 
         try {
             console.log("--- Starting Scrape (Node.js controlled) ---");
-
+            const waitForFlags = async (timeout = 10000) => {
+                const start = Date.now();
+                while (Date.now() - start < timeout) {
+                    if (flags.claim && flags.logs && flags.payment) {
+                        return true;
+                    }
+                    await new Promise(r => setTimeout(r, 100));
+                }
+                return false; 
+            };
             const setRowsPerPage = async (numRows) => {
                 const success = await page.evaluate(async (numRows, waitMs) => {
                     const rowsLabel = window.getElementByTextContains('p', 'Rows per page');
@@ -202,11 +219,25 @@ async function main() {
                 ]);
             };
 
+            const clickRefreshButton = async () => {
+                await Promise.all([
+                    page.waitForNavigation({ waitUntil: 'networkidle0' }),
+                    page.evaluate(() => {
+                        const refreshButton = document.getElementById("Path_132011");
+                        if (refreshButton) {
+                            refreshButton.closest('div').click();
+                        } else {
+                            console.error("CRITICAL: 'refreshButton' not found in browser.");
+                        }
+                    })
+                ]);
+            };
+
             const reconnect = async () => {
                 console.log("reconnecting to the page...");
                 const new_pages = await browser.pages();
                 page = new_pages.find(p => p.url().startsWith(DATA_URL));
-                if (!page) {
+                if (!page || page.isClosed()) {
                     const DATA_URL_CASE = "https://provider.nha.gov.in/caseview";
                     page = new_pages.find(p => p.url().startsWith(DATA_URL_CASE));
                     await clickHomeButton();
@@ -239,7 +270,7 @@ async function main() {
 
                     if (!await setRowsPerPage(ROWS_PER_PAGE_TO_SET)) break;
                     if (!await navigateToPage(currentPage)) break;
-                    if (!page)reconnect();
+                    if (!page || page.isClosed()) await reconnect();
 
                     const patientCards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
 
@@ -258,7 +289,7 @@ async function main() {
                     console.log(`Found ${patientCards.length} cards. Starting from index ${startIndex}.`);
 
                     for (let i = startIndex; i < patientCards.length; i++) {
-                        if (!page)reconnect();
+                        if (!page || page.isClosed()) await reconnect();
                         const currentPatientGlobalIndex = (currentPage - 1) * rowsPerPageNum + i;
                         const patientIdentifier = `Patient ${currentPatientGlobalIndex + 1}`;
 
@@ -271,19 +302,20 @@ async function main() {
                         patientDataCollector.type = DROPDOWN_TEXT_TO_SELECT;
 
                         while (retries < MAX_PATIENT_RETRIES && !success) {
-                            if (!page)reconnect();
-                            const cards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
-                            const card = cards[i];
-
-                            const nameLabel = await card.$('label');
-                            const nameFromCard = nameLabel ? await nameLabel.evaluate(el => el.textContent.trim()) : patientIdentifier;
-
-                            if (retries > 0) {
-                                console.log(`Retry ${retries}/${MAX_PATIENT_RETRIES} for ${patientIdentifier}...`);
-                                patientDataCollector = {};
-                            }
-
                             try {
+                                if (!page || page.isClosed()) await reconnect();
+                                const cards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
+                                const card = cards[i];
+                                if (!card) throw new Error(`Card with index ${i} not found!`);
+                                const nameLabel = await card.$('label');
+                                const nameFromCard = nameLabel ? await nameLabel.evaluate(el => el.textContent.trim()) : patientIdentifier;
+
+                                if (retries > 0) {
+                                    console.log(`Retry ${retries}/${MAX_PATIENT_RETRIES} for ${patientIdentifier}...`);
+                                    patientDataCollector = {};
+                                }
+
+
                                 const clickableElement = await card.waitForSelector("something", { timeout: 5000 });
                                 if (!clickableElement) throw new Error(`clickableElement <something> not found.`);
 
@@ -292,8 +324,15 @@ async function main() {
                                     clickableElement.click()
                                 ]);
 
-                                console.log(`On detail page. Clicking 'Home' to go back...`);
-                                await new Promise(resolve => setTimeout(resolve, 200));
+                                console.log(`On detail page`);
+
+                                const gotData = await waitForFlags(WAIT_FOR_DATA_TIME);
+
+                                if (!gotData) {
+                                    console.warn(`Timed out. Captured: Claim(${flags.claim}), Log(${flags.logs}), Pay(${flags.payment})`);
+                                }
+
+                                console.log("Clicking 'Home' to go back...");
                                 await clickHomeButton();
 
                                 await new Promise(resolve => setTimeout(resolve, WAIT_TIME_MS));
@@ -319,6 +358,10 @@ async function main() {
                                     console.warn(`No API calls were intercepted for ${patientIdentifier}.`);
                                 }
 
+                                flags.logs = false;
+                                flags.payment = false;
+                                flags.claim = false;
+
                             } catch (e) {
                                 retries++;
                                 console.error(`ERROR (Attempt ${retries}/${MAX_PATIENT_RETRIES}) for ${patientIdentifier}: ${e.message}`);
@@ -328,7 +371,7 @@ async function main() {
                                     const isOnListPage = await page.evaluate(() => window.getElementByTextContains('p', 'Rows per page'));
                                     if (!isOnListPage) {
                                         console.log("Not on list page. Clicking 'Home' to recover...");
-                                        await clickHomeButton();
+                                        await clickRefreshButton();
                                     } else {
                                         console.log("Already on list page.");
                                     }
@@ -347,18 +390,21 @@ async function main() {
 
                         if (!success) {
                             console.error(`--- FAILED: ${patientIdentifier} after ${MAX_PATIENT_RETRIES} attempts. Logging and skipping. ---`);
+                            if(!page || page.isClosed())await reconnect();
                             const cards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
                             const card = cards[i];
-                            const nameLabel = await card.$('label');
-                            const nameFromCard = nameLabel ? await nameLabel.evaluate(el => el.textContent.trim()) : patientIdentifier;
+                            if (card) {
+                                const nameLabel = await card?.$('label');
+                                const nameFromCard = nameLabel ? await nameLabel.evaluate(el => el.textContent.trim()) : patientIdentifier;
 
-                            FAILED_PATIENTS.push({
-                                patientIdentifier: patientIdentifier,
-                                globalIndex: currentPatientGlobalIndex,
-                                page: currentPage,
-                                indexOnPage: i,
-                                name: nameFromCard,
-                            });
+                                FAILED_PATIENTS.push({
+                                    patientIdentifier: patientIdentifier,
+                                    globalIndex: currentPatientGlobalIndex,
+                                    page: currentPage,
+                                    indexOnPage: i,
+                                    name: nameFromCard,
+                                });
+                            }
                         }
                     }
 

@@ -25,9 +25,9 @@ function convertToMultipleCSVs(records) {
     const headers = {
         patients: [
             "Registration Id", "Patient Name", "type", "Patient Phone", "Patient Address", "Diagnosis", "Treatment", "Date of Admission",
-            "Discharge Date", "Length of stay", "Treatment Plan Breakup", "Claimed Amount","Claimed amount after Dedcuctions","Claimed Amount Deduction","Claimed Amount Deduction(%)","Claimed Amount Deduction Breakup" ,"Claimed Amount Breakup","Total Claims(With Incentives)", "Claims Approved", "TDS", "Final amount after TDS",
+            "Discharge Date", "Length of stay", "Treatment Plan Breakup", "Claimed Amount", "Claimed Amount Breakup", "Total Claims(With Incentives)", "Claims Approved", "TDS", "Final amount after TDS",
             "Settled to Bank", "Settlement Date", "Claims Approved Breakup", "Case Logs", "Payment TAT", "Deduction Amount",
-            "Deduction %", "Num of Queries","Queries", "Deduction Breakup"
+            "Deduction %", "Num of Queries", "Queries", "Deduction Breakup"
         ]
     };
 
@@ -72,8 +72,8 @@ function convertToMultipleCSVs(records) {
         let numQuery = 0;
         let queries = "";
         (record?.log ?? []).forEach(l => {
-            if (l?.status == "Claim Queried"){
-                queries+=l?.sno + "    " + l?.process + "    " + l?.raiseddate + "    " + l?.updateddate + "    " + l?.type + "    " + l?.status + "    " + l?.remarks + "    " + l?.user + "    " + l?.amount + "\n";
+            if (l?.status == "Claim Queried") {
+                queries += l?.sno + "    " + l?.process + "    " + l?.raiseddate + "    " + l?.updateddate + "    " + l?.type + "    " + l?.status + "    " + l?.remarks + "    " + l?.user + "    " + l?.amount + "\n";
                 numQuery++;
             }
             logs += l?.sno + "    " + l?.process + "    " + l?.raiseddate + "    " + l?.updateddate + "    " + l?.type + "    " + l?.status + "    " + l?.remarks + "    " + l?.user + "    " + l?.amount + "\n";
@@ -82,7 +82,7 @@ function convertToMultipleCSVs(records) {
         // 4. Build rows for diagnoses.csv
         let diagnosis = "";
         (claim?.diagnosis ?? []).forEach(d => {
-            diagnosis += d?.sno + "    " + d.display+ "\n"
+            diagnosis += d?.sno + "    " + d.display + "\n"
         });
 
         // 5. Build rows for treatments.csv
@@ -94,8 +94,10 @@ function convertToMultipleCSVs(records) {
         // 6. Build rows for diagnoses.csv
         let amounts = "";
         let deductionBreakUp = "";
+        let baseDeductions = "";
         (claim?.amount?.calculatedamount ?? []).forEach(d => {
             if (parseFloat(d?.netamount) != (parseFloat(d?.packagecost) * parseFloat(d?.quantity))) deductionBreakUp += (parseFloat(d?.packagecost) * parseFloat(d?.quantity)) - parseFloat(d?.amount) + "\n"
+            if ((d?.approvedfactor?.split("%").length > 1) && (parseInt(d?.approvedfactor?.split("%")[0]) < 100)) baseDeductions += d?.packagecost + "    " + d?.status + "    " + "qnty: " + d?.quantity + "    " + d?.approvedfactor + "    " + d?.amount + "\n"
             amounts += d?.packagecost + "    " + d?.status + "    " + "qnty: " + d?.quantity + "    " + d?.approvedfactor + "    " + d?.amount + "\n"
         });
 
@@ -105,18 +107,13 @@ function convertToMultipleCSVs(records) {
             if (d?.status == "Approved") amountapproved += d?.packagecost + "    " + d?.status + "    " + "qnty: " + d?.quantity + "    " + d?.approvedfactor + "    " + d?.amount + "\n"
         });
 
-        // 7. Base decductions
-        let baseDeductions = "";
-        (claim?.amount?.calculatedamount ?? []).forEach(d => {
-            if ((d?.approvedfactor?.split("%").length > 1) && (parseInt(d?.approvedfactor?.split("%")[0]) < 100)) baseDeductions += d?.packagecost + "    " + d?.status + "    " + "qnty: " + d?.quantity + "    " + d?.approvedfactor + "    " + d?.amount + "\n"
-        });
-
         // 8. Base decductions
         let Deductions = "";
         (claim?.amount?.calculatedamount ?? []).forEach(d => {
-            if(d.deductions)for(let deduction of d.deductions)Deductions += deduction.deductedamount + "    " + deduction.deductiondescription + "\n"
+            if (d.deductions) for (let deduction of d.deductions) Deductions += deduction.deductedamount + "    " + deduction.deductiondescription + "\n"
         });
-
+        Deductions+=baseDeductions;
+        
         let dischargeDate = claim.dischargedate.split("/");
         const date = dischargeDate[0];
         dischargeDate[0] = dischargeDate[1];
@@ -132,13 +129,13 @@ function convertToMultipleCSVs(records) {
 
         const TAT = Math.ceil((new Date(transactionDate) - new Date(dischargeDate)) / 86400000);
         const stay = Math.ceil((new Date(dischargeDate) - new Date(admissiondate)) / 86400000);
-        const baseDeduction = amount.packageamount - amount.totalpackageamount;
-        const baseDeductionPercentage = (baseDeduction / amount.packageamount) * 100; 
-        tds = tds == 0?(parseFloat(amount.amountapproved)/10):tds;
+        tds = tds == 0 ? (parseFloat(amount.amountapproved) / 10) : tds;
         const final_amount_to_hospital = amount.amountapproved - tds;
+ 
+                                                                                                                            
         rows.patients.push([
-            patient_no, encounter.patientname,record.type, patient_phone_no, patient_address, diagnosis, claim.treatments[0]?.procedurename, claim.admissiondate, claim.dischargedate, stay, treatments,
-            amount.packageamount, amount.totalpackageamount, baseDeduction, baseDeductionPercentage, baseDeductions,amounts, amount.totalamount, amount.amountapproved, tds, final_amount_to_hospital, status, transactionDate,amountapproved, logs, TAT, deduction, deduction_percentage, numQuery,queries, Deductions
+            patient_no, encounter.patientname, record.type, patient_phone_no, patient_address, diagnosis, claim.treatments[0]?.procedurename, claim.admissiondate, claim.dischargedate, stay, treatments,
+            amount.packageamount, amounts, amount.totalamount, amount.amountapproved, tds, final_amount_to_hospital, status, transactionDate, amountapproved, logs, TAT, deduction, deduction_percentage, numQuery, queries, Deductions
         ].map(escapeCSV).join(','));
     }
 
@@ -198,4 +195,4 @@ function convert() {
     console.log(`\nDone. Wrote ${filesWritten} CSV files.`);
 }
 
-module.exports = {convert};
+module.exports = { convert };
