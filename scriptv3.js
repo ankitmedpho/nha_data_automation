@@ -14,6 +14,8 @@ const START_FROM_PAGE = 1;
 const START_FROM_INDEX_ON_PAGE = 0;
 const MAX_PATIENT_RETRIES = 3;
 const WAIT_FOR_DATA_TIME = 10000;
+var TOTAL_NUM = 0;
+
 function cleanClaimData(data) {
     if (!data) return data;
     try {
@@ -33,11 +35,20 @@ function cleanClaimData(data) {
     return data;
 }
 
+const locks = {
+    claim: false,
+    logs: false,
+    payment: false,
+    list: false
+}
+
 const flags = {
     claim: false,
     logs: false,
-    payment: false
+    payment: false,
+    list: false
 }
+
 async function main() {
     let browser;
     let page;
@@ -110,7 +121,7 @@ async function main() {
         console.log("Setting up network response listener...");
 
         page.on('response', async (response) => {
-            if (response.url().includes("claim/info")) {
+            if (response.url().includes("https://apisprod.nha.gov.in/pmjay/provider/provider/claim/info") && locks.claim) {
                 try {
                     let data = await response.json();
                     console.log(`Intercepted: claim/info`);
@@ -121,10 +132,7 @@ async function main() {
                     console.warn(`\nCould not parse 'claim/info' response as JSON. ${e.message}\n`);
                 }
             }
-        });
-
-        page.on('response', async (response) => {
-            if (response.url().includes("activity/log")) {
+            if (response.url().includes("https://apisprod.nha.gov.in/pmjay/provider/provider/activity/log") && locks.logs) {
                 try {
                     let data = await response.json();
                     console.log(`Intercepted: activity/log`);
@@ -134,15 +142,20 @@ async function main() {
                     console.warn(`\nCould not parse 'activity/log' response as JSON. ${e.message}\n`);
                 }
             }
-        });
-
-        page.on('response', async (response) => {
-            if (response.url().includes("fetch/paymentDtls")) {
+            if (response.url().includes("https://apisprod.nha.gov.in/pmjay/provider/provider/fetch/paymentDtls") && locks.payment) {
                 try {
                     let data = await response.json();
                     console.log(`Intercepted: fetch/paymentDtls`);
                     patientDataCollector.payment = data;
                     flags.payment = true;
+                } catch (e) {
+                    console.warn(`\nCould not parse 'fetch/paymentDtls' response as JSON. ${e.message}\n`);
+                }
+            }
+            if (response.url().includes("https://apisprod.nha.gov.in/pmjay/provider/nproviderdashboard/V3/beneficiary/list") && locks.list) {
+                try {
+                    console.log(`Intercepted: lists`);
+                    flags.list = true;
                 } catch (e) {
                     console.warn(`\nCould not parse 'fetch/paymentDtls' response as JSON. ${e.message}\n`);
                 }
@@ -159,10 +172,10 @@ async function main() {
                     }
                     await new Promise(r => setTimeout(r, 100));
                 }
-                return false; 
+                return false;
             };
             const setRowsPerPage = async (numRows) => {
-                const success = await page.evaluate(async (numRows, waitMs) => {
+                const success = await page.evaluate(async (numRows, num) => {
                     const rowsLabel = window.getElementByTextContains('p', 'Rows per page');
                     if (!rowsLabel) return false;
                     const select = rowsLabel.querySelector('select');
@@ -171,9 +184,16 @@ async function main() {
                     select.value = numRows.toString();
                     select.dispatchEvent(new Event('change', { bubbles: true }));
                     select.dispatchEvent(new Event('input', { bubbles: true }));
-                    await window.sleep(waitMs);
+                    let m = 100;
+                    while (m >= 0) {
+                        const list = document.getElementsByClassName("col-lg-4 col-md-6 col-sm-12");
+                        if (list.length == 50 || list.length == num % numRows) break;
+                        m--;
+                        await window.sleep(100);
+                    }
+                    if (m < 0) return false;
                     return true;
-                }, numRows, WAIT_TIME_MS);
+                }, numRows, TOTAL_NUM);
                 if (!success) console.error("Failed to set rows per page.");
                 return success;
             };
@@ -198,9 +218,8 @@ async function main() {
                         const nextButton = document.querySelector('li.next a[rel="next"]');
                         if (!nextButton || nextButton.getAttribute('aria-disabled') === 'true') return false;
                         nextButton.click();
-                        await window.sleep(navWaitMs);
+                        await window.sleep(navWaitMs)
                     }
-                    await window.sleep(200);
                     return true;
                 }, targetPage, WAIT_TIME_MS, NAV_NEXT_WAIT_TIME_MS);
             };
@@ -215,22 +234,28 @@ async function main() {
                         } else {
                             console.error("CRITICAL: 'Home' not found in browser.");
                         }
-                    })
+                    }),
+                    page.waitForSelector("select")
                 ]);
             };
 
             const clickRefreshButton = async () => {
-                await Promise.all([
-                    page.waitForNavigation({ waitUntil: 'networkidle0' }),
-                    page.evaluate(() => {
-                        const refreshButton = document.getElementById("Path_132011");
-                        if (refreshButton) {
-                            refreshButton.closest('div').click();
-                        } else {
-                            console.error("CRITICAL: 'refreshButton' not found in browser.");
-                        }
-                    })
-                ]);
+                try {
+                    await Promise.all([
+                        page.waitForNavigation({ waitUntil: 'networkidle0' }),
+                        page.evaluate(() => {
+                            const homeButton = document.getElementById("Path_132011");
+                            if (homeButton) {
+                                homeButton.parentElement.parentElement.click();
+                            } else {
+                                console.error("CRITICAL: 'Home' not found in browser.");
+                            }
+                        }),
+                        page.waitForSelector(".col-lg-4.col-md-6.col-sm-12")
+                    ]);
+                } catch (error) {
+                    console.log("error occured while clicking refress button ")
+                }
             };
 
             const reconnect = async () => {
@@ -242,11 +267,12 @@ async function main() {
                     page = new_pages.find(p => p.url().startsWith(DATA_URL_CASE));
                     await clickHomeButton();
                 }
+                await clickRefreshButton();
                 console.log("reconnected");
             }
 
             for (const DROPDOWN_TEXT_TO_SELECT of DROPDOWN) {
-                console.log("Running initial setup (Dropdown)...");
+                console.log("Running initial setup (Dropdown)");
                 await page.evaluate(async (TEXT, WAIT) => {
                     try {
                         const input = document.querySelector('label[for="patientStatus"] + div input[id*="-input"]');
@@ -261,17 +287,18 @@ async function main() {
                         console.error("CRITICAL: Failed initial setup.", e);
                     }
                 }, DROPDOWN_TEXT_TO_SELECT, WAIT_TIME_MS);
-
                 let currentPage = START_FROM_PAGE;
                 let rowsPerPageNum = parseInt(ROWS_PER_PAGE_TO_SET);
+                const dropdowns = await page.$$(".css-bvz1u6-singleValue")
+                const dropdown = await dropdowns[1].evaluate(el => el.textContent.trim());
+                TOTAL_NUM = parseInt(dropdown.split("(")[1].split(")")[0]);
 
                 while (true) {
-                    console.log(`\n==================\nStarting Page ${currentPage}\n==================`);
 
+                    console.log(`\n==================\nStarting Page ${currentPage}\n==================`);
+                    if (!page || page.isClosed()) await reconnect();
                     if (!await setRowsPerPage(ROWS_PER_PAGE_TO_SET)) break;
                     if (!await navigateToPage(currentPage)) break;
-                    if (!page || page.isClosed()) await reconnect();
-
                     const patientCards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
 
                     if (patientCards.length === 0) {
@@ -303,6 +330,8 @@ async function main() {
 
                         while (retries < MAX_PATIENT_RETRIES && !success) {
                             try {
+                                if (!await setRowsPerPage(ROWS_PER_PAGE_TO_SET)) break;
+                                if (!await navigateToPage(currentPage)) break;
                                 if (!page || page.isClosed()) await reconnect();
                                 const cards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
                                 const card = cards[i];
@@ -312,12 +341,20 @@ async function main() {
 
                                 if (retries > 0) {
                                     console.log(`Retry ${retries}/${MAX_PATIENT_RETRIES} for ${patientIdentifier}...`);
+                                    await clickRefreshButton();
                                     patientDataCollector = {};
                                 }
 
 
                                 const clickableElement = await card.waitForSelector("something", { timeout: 5000 });
                                 if (!clickableElement) throw new Error(`clickableElement <something> not found.`);
+
+                                flags.logs = false;
+                                flags.payment = false;
+                                flags.claim = false;
+                                locks.logs = true;
+                                locks.payment = true;
+                                locks.claim = true;
 
                                 await Promise.all([
                                     page.waitForNavigation({ waitUntil: 'networkidle0' }),
@@ -331,6 +368,10 @@ async function main() {
                                 if (!gotData) {
                                     console.warn(`Timed out. Captured: Claim(${flags.claim}), Log(${flags.logs}), Pay(${flags.payment})`);
                                 }
+
+                                locks.logs = false;
+                                locks.payment = false;
+                                locks.claim = false;
 
                                 console.log("Clicking 'Home' to go back...");
                                 await clickHomeButton();
@@ -361,17 +402,20 @@ async function main() {
                                 flags.logs = false;
                                 flags.payment = false;
                                 flags.claim = false;
+                                
 
                             } catch (e) {
                                 retries++;
                                 console.error(`ERROR (Attempt ${retries}/${MAX_PATIENT_RETRIES}) for ${patientIdentifier}: ${e.message}`);
                                 console.log("Attempting recovery...");
-
+                                page = pages.find(p => p.url().startsWith(DATA_URL));
+                                if(!page)throw new Error("Page not found");
+                                else console.log("Page connected successfully");
                                 try {
                                     const isOnListPage = await page.evaluate(() => window.getElementByTextContains('p', 'Rows per page'));
                                     if (!isOnListPage) {
-                                        console.log("Not on list page. Clicking 'Home' to recover...");
-                                        await clickRefreshButton();
+                                        console.log("Not on list page. Clicking 'Refresh' to recover...");
+                                        await clickHomeButton();
                                     } else {
                                         console.log("Already on list page.");
                                     }
@@ -387,10 +431,10 @@ async function main() {
                                 }
                             }
                         }
-
+                        
                         if (!success) {
                             console.error(`--- FAILED: ${patientIdentifier} after ${MAX_PATIENT_RETRIES} attempts. Logging and skipping. ---`);
-                            if(!page || page.isClosed())await reconnect();
+                            if (!page || page.isClosed()) await reconnect();
                             const cards = await page.$$(".col-lg-4.col-md-6.col-sm-12");
                             const card = cards[i];
                             if (card) {
